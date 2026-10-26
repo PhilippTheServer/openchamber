@@ -113,7 +113,9 @@ export const registerHostedMcpOAuth = (app, {
       if (status.data?.status !== 'pending' || pending !== record || record.consumed || !valid(record)) return fail(res, 409);
       record.consumed = true;
       const fields = new URLSearchParams();
-      for (const key of ['state', 'code', 'iss', 'error', 'error_description']) if (params.has(key)) fields.set(key, params.get(key));
+      for (const key of ['state', 'code', 'iss']) if (params.has(key)) fields.set(key, params.get(key));
+      // Native logs authorization failures. Provider/browser error text must not reach those logs.
+      if (params.has('error')) fields.set('error', 'access_denied');
       const response = await fetchImpl(`http://127.0.0.1:${port}${CALLBACK}?${fields}`, {
         redirect: 'error', signal: AbortSignal.timeout(15_000),
       });
