@@ -13,6 +13,7 @@ import os from 'os';
 import crypto from 'crypto';
 import http2 from 'node:http2';
 import { createUiAuth } from './lib/ui-auth/ui-auth.js';
+import { registerHostedMcpOAuth } from './lib/opencode/hosted-oauth.js';
 import { createTunnelAuth } from './lib/opencode/tunnel-auth.js';
 import { createManagedTunnelConfigRuntime } from './lib/tunnels/managed-config.js';
 import { createTunnelProviderRegistry } from './lib/tunnels/registry.js';
@@ -2117,7 +2118,8 @@ const bootstrapOpenCodeAtStartup = async (...args) => {
 const killProcessOnPort = (...args) => openCodeLifecycleRuntime.killProcessOnPort(...args);
 const waitForPortRelease = (...args) => openCodeLifecycleRuntime.waitForPortRelease(...args);
 
-const setupProxy = (...args) => serverUtilsRuntime.setupProxy(...args);
+let registerHostedMcpOAuthApi = null;
+const setupProxy = (app) => serverUtilsRuntime.setupProxy(app, { registerHostedMcpOAuthApi });
 const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   process,
   shutdownTimeoutMs: SHUTDOWN_TIMEOUT,
@@ -2510,6 +2512,12 @@ async function main(options = {}) {
   // /api/system/info resolves port + tunnel URL lazily at request time.
   let tunnelRuntimeContextHolder = null;
 
+  registerHostedMcpOAuthApi = registerHostedMcpOAuth(app, {
+    express,
+    getUiAuthController: () => uiAuthController,
+    buildOpenCodeUrl,
+    getOpenCodeAuthHeaders,
+  });
   const bootstrapResult = bootstrapRuntime.setupBaseRoutes(app, {
     process,
     openchamberVersion: OPENCHAMBER_VERSION,

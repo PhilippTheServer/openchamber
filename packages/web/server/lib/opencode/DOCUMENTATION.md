@@ -1031,7 +1031,7 @@ Discovery already reads each skill's frontmatter and body. Source lookup uses th
   - Shelled message pages: `GET /api/session/:sessionID/message` with `x-openchamber-part-shells: v1[,<tool>…]` returns the page with finished tool results replaced by an `openchamberContentShell` metadata marker and with fields no client reads dropped (`message-shells.js`); without the header the request reaches OpenCode untouched. `GET /api/session/:sessionID/message/:messageID` is never shelled, so clients complete a call from it. `/health` and `/api/version` list `api.message-part-shells.v1` so clients send the header only to servers that honour it.
   - Upstream bound for the session routes: `GET /api/session`, `GET /api/session/:sessionID` and the shelled `GET /api/session/:sessionID/message` read OpenCode with the generic proxy's deadline (`SESSION_UPSTREAM_TIMEOUT_MS` overrides it in tests) and cancel that read when the client hangs up. Cancelling on hang-up is what stops abandoned reads from piling up when the UI retries; a budget shorter than the UI's own 30s wait would turn a slow but working session open into a retry loop of 504s. The budget starts before the path canonicalization, so a client that leaves during that wait cancels the read too. A read that ran out of time answers `504 OpenCode upstream timed out`, the same answer the generic proxy gives; a client that hung up gets nothing, because there is nobody left to answer. These routes read OpenCode themselves instead of reaching the generic proxy, so they apply its deadline explicitly.
   - Upstream paths are the request paths. OpenCode 2.x serves everything under `/api/*` itself, so the mount prefix Express strips is put back instead of being rewritten away.
-  - There is no interactive OAuth forwarder any more: v2 connects providers through `/api/integration/*`, whose OAuth steps return immediately and are polled, so no route needs a longer deadline than the ordinary one.
+  - V2 connects providers through `/api/integration/*`, whose OAuth steps return immediately and are polled. The opt-in hosted MCP callback uses the same native attempts and ordinary bounded requests; it does not hold an initiation request open for browser consent.
   - Generic `/api/*` forwarding with hop-by-hop header filtering
   - Session list forwarding on every platform, preserving V2 query filters and pagination cursors. Global reads use OpenCode's cross-directory list rather than merging per-project pages on Windows.
   - OpenCode readiness gate for proxied `/api` requests
@@ -1065,6 +1065,63 @@ The VS Code extension owns its separate Git and proxy implementation.
   - Calls the optional `onConnect()` on each connect of the stream, and once at start when the shared hub is already connected. `index.js` reads OpenCode's running list there and hands it to `adoptRunningSessions`. A failure is logged and does not touch the stream.
 
 ## Storage and configuration
+
+### Hosted MCP OAuth callback
+
+`hosted-oauth.js` owns one opt-in hosted MCP authorization attempt. Register its
+callback before body parsing/logging, then call its returned API registrar after
+the API authentication gate and before the OpenCode proxy. The web,
+hosted-mobile, Electron and Capacitor server share this route; initiation
+requires the configured HTTPS browser origin and a validated UI session. Paired
+bearer clients cannot initiate this flow. With no opt-in it registers nothing.
+VS Code owns its separate OpenCode transport and does not install this relay.
+
+Set all four server environment variables together:
+
+- `OPENCHAMBER_MCP_OAUTH_REDIRECT_URI`: an HTTPS URL on the default port with
+  exact path `/oauth/mcp/callback` and no credentials, query or fragment.
+- `OPENCHAMBER_MCP_OAUTH_CALLBACK_PORT`: one fixed loopback port above 1023.
+- `OPENCHAMBER_MCP_OAUTH_SERVER`: the configured MCP server's name.
+- `OPENCHAMBER_MCP_OAUTH_ISSUER`: its expected HTTPS authorization server issuer.
+
+The native MCP config must independently set the same `oauth.redirect_uri` and
+numeric `oauth.callback_port`. Native OpenCode owns registration, state, PKCE,
+token exchange and credential storage. The relay validates the returned redirect,
+issuer origin and S256 challenge before presenting native's authorization URL.
+The HTTPS/fixed-loopback combination is tested against OpenCode 2.1.4; the
+upstream redirect_uri documentation still describes loopback URIs.
+
+UI password auth must be enabled. UI sessions stay SameSite=Strict. Initiation
+issues a separate Secure/HttpOnly `__Host-oc_mcp_oauth` SameSite=Lax cookie to bind
+the cross-site GET callback to the initiating browser. The original authenticated
+session is revalidated before forwarding. The native PID/version/base URL, native
+attempt, location and expiry must still match. One in-memory slot serializes
+starts before the first native authorization call; a process restart loses it.
+State and browser nonce are checked before either successful or error responses
+reach the loopback listener. Callback delivery is single-use, including uncertain
+delivery. Status polling and cancellation require the initiating session and
+browser nonce. A terminal poll releases the slot; expiry cancels and clears it.
+
+Only exact GET `/oauth/mcp/callback` may bypass an ingress SSO challenge. Keep
+SSO on all other routes and suppress query strings for this path in every
+ingress/access/error log. Never redirect the callback through SSO return URLs.
+The application emits fixed response text with no-store, no-referrer and a
+restrictive CSP, and never forwards browser-supplied targets or follows redirects.
+Enterprise network-access policy is enforced on both initiation and callback.
+
+### Why a separate Lax nonce cookie
+
+The existing Strict UI session cookie is absent on a provider's cross-site
+redirect. A short-lived browser nonce and server-side session revalidation retain
+that protection without changing cookie policy for the rest of OpenChamber.
+
+### Why one pending slot
+
+Native authorization binds a fixed loopback port. Reserving a slot before native
+initiation prevents overlapping binds. Direct clients of native OpenCode bypass
+this application lock and must not initiate the relay-enabled integration in
+parallel. Use a separate callback port for any other native instance.
+
 - Provider auth: read from the running OpenCode over `GET /api/credential` (2.0.20+); OpenCode 2.x owns credentials.
 - Session archive state: on OpenCode's record (`PATCH /api/session/{id}` with `archived`, OpenCode 2.1+) through `lib/openchamber-sessions/session-archive.js`. OpenCode answers `LocationNotFoundError` for a session whose directory is gone (every session of a removed worktree), so such a session moves to its project's main folder (`POST /api/session/{id}/move`, the project's `canonical` directory) and is archived there; when archiving, `sessions-archive.json` under the OpenChamber data dir marks it archived before the move, so the move OpenCode announces never shows it as active. The file keeps only sessions with no folder to move to, and entries an older OpenChamber wrote until the migration after OpenCode starts pushes them. A PATCH starts the session's location with its MCP servers, so the migration takes one directory at a time and unloads (`DELETE /api/debug/location`) every location it started; the ones running before it (`GET /api/debug/location`) stay.
 - Unread baseline: `sessions-unread.json` (`{ since }`) under the OpenChamber data dir, created once on the first start that reads it and never replaced; an unreadable file is left alone and the proxy serves records as they are. The VS Code extension reads and creates the same file.
