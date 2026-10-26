@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
@@ -63,7 +63,9 @@ const setup = async (options = {}) => {
   });
   registerCommonRequestMiddleware(app, { express, verboseRequestLogs: options.verbose ?? false });
   app.post('/auth/session', auth.handleSessionCreate);
+  app.get('/auth/session', auth.handleSessionStatus);
   app.use('/api', auth.requireAuth);
+  app.post('/api/auth/reset', auth.handleResetAuth);
   registerOpenCodeProxy(app, {
     fs: {}, os: {}, path, OPEN_CODE_READY_GRACE_MS: 0,
     getRuntime: () => ({ openCodePort: 43871, isOpenCodeReady: true, openCodeNotReadySince: 0, isRestartingOpenCode: false }),
@@ -73,7 +75,7 @@ const setup = async (options = {}) => {
     registerHostedMcpOAuthApi: registerApi,
   });
   app.use((_req, res) => res.status(418).end());
-  const login = async () => (await request(app).post('/auth/session').send({ password: 'fixture-password' })).headers['set-cookie'][0].split(';')[0];
+  const login = async (trustDevice = false) => (await request(app).post('/auth/session').send({ password: 'fixture-password', trustDevice })).headers['set-cookie'][0].split(';')[0];
   const owner = await login();
   const start = () => request(app).post(PATH).set('Origin', ORIGIN).set('Cookie', owner).send({ methodID: 'oauth' });
   const begun = options.noStart ? null : await start();
@@ -172,11 +174,32 @@ describe('hosted MCP OAuth routes', () => {
     const t = await setup();
     expect((await request(t.app).post(PATH).set('Origin', ORIGIN).send({ methodID: 'oauth' })).status).toBe(401);
     expect((await request(t.app).post(PATH).set('Cookie', t.owner).set('Origin', 'https://evil.invalid').send({ methodID: 'oauth' })).status).toBe(403);
-    const other = await t.login();
-    expect((await request(t.app).delete(`${PATH}/attempt-1`).set('Cookie', other).set('Origin', ORIGIN)).status).toBe(404);
+    const other = await t.login(true);
+    expect(other).not.toBe(t.owner);
+    expect((await request(t.app).get('/auth/session').set('Cookie', other)).body.authenticated).toBe(true);
+    expect((await request(t.app).get(`${PATH}/attempt-1`).set('Cookie', `${other}; ${t.browser}`).set('Origin', ORIGIN)).status).toBe(404);
+    expect((await request(t.app).delete(`${PATH}/attempt-1`).set('Cookie', `${other}; ${t.browser}`).set('Origin', ORIGIN)).status).toBe(404);
+    expect(t.calls.some((call) => call.init.method === 'DELETE')).toBe(false);
     expect((await request(t.app).delete(`${PATH}/attempt-1`).set('Cookie', `${t.owner}; ${t.browser}`).set('Origin', ORIGIN)).status).toBe(204);
     expect((await t.callback()).status).toBe(400);
     expect(t.calls.some((call) => call.init.method === 'DELETE')).toBe(true);
+  });
+  it('rejects a pending callback after actual UI JWT-secret rotation', async () => {
+    const secret = process.env.OPENCODE_JWT_SECRET;
+    delete process.env.OPENCODE_JWT_SECRET;
+    try {
+      const t = await setup();
+      expect(t.begun.status).toBe(200);
+      expect(existsSync(path.join(dataDir, 'jwt-secret'))).toBe(true);
+      const reset = await request(t.app).post('/api/auth/reset').set('Cookie', t.owner);
+      expect(reset.status).toBe(200);
+      expect(reset.body.signedOutEverywhere).toBe(true);
+      expect((await request(t.app).get('/auth/session').set('Cookie', t.owner)).status).toBe(401);
+      expect((await t.callback()).status).toBe(403);
+      expect(t.calls.some((call) => call.url.startsWith('http://127.0.0.1:42819'))).toBe(false);
+    } finally {
+      if (secret === undefined) delete process.env.OPENCODE_JWT_SECRET; else process.env.OPENCODE_JWT_SECRET = secret;
+    }
   });
   it('serializes concurrent starts before native authorization', async () => {
     const t = await setup({ noStart: true, hold: true });

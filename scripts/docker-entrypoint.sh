@@ -75,9 +75,6 @@ if [ "$#" -gt 0 ]; then
 fi
 
 set -- bun packages/web/bin/cli.js
-if [ -n "${OPENCHAMBER_UI_PASSWORD:-}" ]; then
-  set -- "$@" --ui-password "$OPENCHAMBER_UI_PASSWORD"
-fi
 "$@"
 
 exec bun packages/web/bin/cli.js logs
