@@ -1142,6 +1142,9 @@ export const registerOpenCodeProxy = (app, deps) => {
     });
   }
 
+  // OAuth initiation still passes readiness, worktree and folder-trust gates.
+  deps.registerHostedMcpOAuthApi?.();
+
   // V2 lists sessions across directories on every platform and owns pagination.
   app.get('/api/session', (req, res, next) => {
     return forwardSanitizedSessionListRequest(req, res, next);

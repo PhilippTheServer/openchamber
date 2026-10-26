@@ -183,7 +183,7 @@ export const createServerUtilsRuntime = (dependencies) => {
     }
   };
 
-  const setupProxy = (app) => {
+  const setupProxy = (app, { registerHostedMcpOAuthApi } = {}) => {
     registerOpenCodeProxy(app, {
       fs,
       os,
@@ -203,6 +203,7 @@ export const createServerUtilsRuntime = (dependencies) => {
       mergeSpaceSessionList: typeof getMergeSpaceSessionList === 'function' ? getMergeSpaceSessionList() : null,
       spaceEventHub: typeof getSpaceEventHub === 'function' ? getSpaceEventHub() : null,
       openCodeTrust,
+      registerHostedMcpOAuthApi,
     });
   };
 
