@@ -1107,6 +1107,8 @@ SSO on all other routes and suppress query strings for this path in every
 ingress/access/error log. Never redirect the callback through SSO return URLs.
 The application emits fixed response text with no-store, no-referrer and a
 restrictive CSP, and never forwards browser-supplied targets or follows redirects.
+Provider error responses become a fixed `access_denied` at the native listener;
+their descriptions and URLs never reach native's authorization-failure logs.
 Enterprise network-access policy is enforced on both initiation and callback.
 
 ### Why a separate Lax nonce cookie

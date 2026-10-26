@@ -123,9 +123,13 @@ describe('hosted MCP OAuth routes', () => {
   });
   it('forwards a validated provider error without reflecting its text', async () => {
     const t = await setup({ callbackStatus: 400 });
-    const result = await t.callback({ state: STATE, error: 'access_denied', error_description: '<script>secret</script>' });
+    const result = await t.callback({ state: STATE, error: 'untrusted-private-error', error_description: '<script>secret</script>' });
     expect(result.status).toBe(400);
     expect(result.text).not.toContain('secret');
+    const native = new URL(t.calls.find((call) => call.url.startsWith('http://127.0.0.1:42819')).url);
+    expect(native.searchParams.get('error')).toBe('access_denied');
+    expect(native.searchParams.has('error_description')).toBe(false);
+    expect(native.href).not.toContain('untrusted-private-error');
   });
   it('preserves ordinary UI status polling without an Origin header through terminal completion', async () => {
     const t = await setup();
