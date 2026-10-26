@@ -62,7 +62,18 @@ function writeInstanceOptions(instanceFilePath, options, onNotice) {
       apiOnly: options.apiOnly === true,
       startedAt: Number.isFinite(options.startedAt) ? options.startedAt : Date.now(),
     };
-    fs.writeFileSync(instanceFilePath, JSON.stringify(toStore, null, 2), { mode: 0o600 });
+    const fd = fs.openSync(instanceFilePath, fs.constants.O_WRONLY | fs.constants.O_CREAT | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile() || (process.getuid && stat.uid !== process.getuid())) throw new Error('Instance file must belong to this user');
+      // Creation mode does not tighten an existing file. Protect it before writing the password.
+      fs.fchmodSync(fd, 0o600);
+      if (process.getuid && (fs.fstatSync(fd).mode & 0o777) !== 0o600) throw new Error('Instance file must be owner-only');
+      fs.ftruncateSync(fd, 0);
+      fs.writeFileSync(fd, JSON.stringify(toStore, null, 2));
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch (error) {
     const message = `Could not write instance file: ${error.message}`;
     if (typeof onNotice === 'function') {

@@ -68,6 +68,14 @@ Command modules implement user-facing commands and preserve output contracts acr
 
 ## Shared Helper Modules
 
+Instance option files contain the UI password. `cli-process.js` opens them
+without truncation, verifies a regular file owned by the current POSIX user,
+and applies/verifies mode 0600 before replacing their contents. Existing files
+are tightened too; symlinks are refused where O_NOFOLLOW is supported. Windows
+retains its existing platform ACL behavior; POSIX mode checks do not model ACLs.
+Docker startup passes the password through the supported environment variable,
+including the legacy alias, without placing it in process arguments.
+
 These modules hold reusable, non-presentational logic for commands.
 
 - `cli-args.js`
